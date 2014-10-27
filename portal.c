@@ -330,7 +330,7 @@ int tcp_recv(int sd, int len, char *buff)
 
 	do {
 		int nReadBytes = recv(sd, ptr, left, 0);
-		if(nReadBytes<0) break;
+		if(nReadBytes<=0) break;
 		else {
 			nTotal = nTotal + nReadBytes;
 			ptr = ptr + nReadBytes;

@@ -6170,12 +6170,13 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 					char line[2048];
 					int filesend;
 					struct timeval timeout;
+					char * fp_line = NULL;
 
 					timeout.tv_sec = 15;     // If the connection stays for more than 15 seconds, lose it.
 					timeout.tv_usec = 100;
 					setsockopt(sd, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout, sizeof(timeout));
 
-					while(fgets(line,2048,fp)!=NULL) {
+					while((fp_line = fgets(line,2048,fp))!=NULL) {
 						char *filedata = NULL;
 						char *data_type = NULL;
 						char rfile[30] = "DATA:READFROMFILE";
@@ -6237,16 +6238,19 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 					}
 
 					// not completed
-					if(fgets(fname,2,fp)!=NULL) {
-						fclose(fp);
-					} else {
-						fclose(fp);
+					//if(fgets(fname,2,fp)!=NULL) { fclose(fp); } else { // might hang here
+
+					fclose(fp);
+					if(fp_line == NULL)
+					{
 						char cmd[200];
 						sprintf(cmd, "mv %s.mdld %s.mdld.done", serialnumber, serialnumber);
 						system(cmd);
+						logNow("\n mdld ok0 [%s]", cmd);
 					}
 					if(response) free(response); 
 
+					logNow("\n mdld ok " );
 					return(0);
 				}
 	}
@@ -6269,7 +6273,7 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 					int msgsent = 0;
 
 					struct timeval timeout;
-					timeout.tv_sec = 15;
+					timeout.tv_sec = 5;
 					timeout.tv_usec = 100;
 
 					setsockopt(sd, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout, sizeof(timeout));
@@ -6552,7 +6556,8 @@ static int EchoIncomingPackets(SOCKET sd)
 		do
 		{
 #ifndef WIN32
-			timeout.tv_sec = waitTime;	// If the connection stays for more than 30 minutes, lose it.
+			//timeout.tv_sec = waitTime;	// If the connection stays for more than 30 minutes, lose it.
+			timeout.tv_sec = 30;	// If the connection stays for more than 30 seconds, lose it.
 			timeout.tv_usec = 100;
 			setsockopt(sd, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout, sizeof(timeout));
 #endif
@@ -6577,7 +6582,7 @@ static int EchoIncomingPackets(SOCKET sd)
 					--lengthBytes;
 				}
 			}
-			else if (nReadBytes == SOCKET_ERROR)
+			else if (nReadBytes == SOCKET_ERROR  || nReadBytes < 0)
 			{
 				logNow("\n%s:: Connection closed by peer (socket - %d).\n", timeString(temp, sizeof(temp)), errno);
 #ifdef epay
@@ -6664,7 +6669,7 @@ static int EchoIncomingPackets(SOCKET sd)
 				memcpy(&request[requestLength], acReadBuffer, nReadBytes);
 				requestLength += nReadBytes;
 			}
-			else if (nReadBytes == SOCKET_ERROR)
+			else if (nReadBytes == SOCKET_ERROR || nReadBytes < 0)
 			{
 				if (request) free(request);
 				logNow("\n%s:: Connection closed by peer (socket2 - %d).\n", timeString(temp, sizeof(temp)), errno);
