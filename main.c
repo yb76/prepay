@@ -3322,6 +3322,7 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 	char tid[30]="";
 	char temp[50]="";
 	int dldexist = 0;
+	char appversion[30]="";
 
 	// Increment the unauthorised flag
 	(*unauthorised)++;
@@ -3442,6 +3443,7 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 			{
 				FILE * fp;
 				char fname[100];
+				char temp[100];
 
 				sprintf(fname, "%s.iPAY_CFG", serialnumber);
 
@@ -3466,6 +3468,18 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 
 				iPAY_CFG_RECEIVED = 1;
 				getObjectField(json, 1, tid, NULL, "TID:");
+
+				// If there is a specific message to the terminal, add it now
+				sprintf(temp, "T%s.dld", tid);
+				if ((fp = fopen(temp, "rb")) != NULL)
+				{
+					char line[1024];
+					while (fgets(line, 1024, fp) != NULL)
+						addObject(&response, line, 1, offset, 0);
+					fclose(fp);
+					remove(temp);
+					dldexist = 1;
+				}
 
 			}
 
@@ -3573,6 +3587,8 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 				getObjectField(json, 1, toinv, NULL, "LAST_INV:");
 				getObjectField(json, 1, batch, NULL, "BATCH_SENT:");
 				getObjectField(json, 1, version, NULL, "VERSION:");
+				strcpy(appversion,version);
+
 				if(version && version[0] >= '2') {
 					batchno = atoi(batch) - 1;
 				} else if(strlen(batch))
@@ -6264,6 +6280,7 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 				strcpy(xmlreq.serialNumber, serialnumber);
 				strcpy(xmlreq.manufacturer, u2.manufacturer);
 				strcpy(xmlreq.model, model );
+				strcpy(xmlreq.appversion, appversion );
 
 				int portal_sd = 0;
 				portal_sd = tcp_connect( portalIPAddress , atoi( portalPortNumber ));
