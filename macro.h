@@ -24,6 +24,7 @@ typedef struct
 	char manufacturer[20];
 	char model[20];
 	char appname[30];
+	char appversion[30];
 	char objectname[30];
 	char amount[15];
 	char last4Digits[5];

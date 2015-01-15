@@ -3774,6 +3774,49 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 						while (fgets(line, 300, fp) != NULL) addObject(&response, line, 1, offset, 0);
 						fclose(fp);
 					}
+
+					//TNS and PIN@POS upgrade
+					{
+					  char sTns[30] = "TNSAPN:TNSICOMAU2";
+					  char sPinpos[30] = "PINATPOS:DISABLED";
+					  char *pIdx = NULL;
+					  char newJson[4000] ="";
+					
+					  if(strstr(json,sTns)==NULL) {
+						sprintf(updfile,"CFG_TNS_%s.dld", version[0]=='2'?"WBC":"CBA");
+						if ((fp = fopen(updfile, "rb")) != NULL) {
+							logNow( "%s,%s:TNS UPDATE \n",serialnumber,tid);
+							while (fgets(line, 300, fp) != NULL) addObject(&response, line, 1, offset, 0);
+							fclose(fp);
+						}
+
+						if(strlen(newJson)==0) strcpy(newJson,json);
+						pIdx = strrchr(newJson,'}');
+						if(pIdx) sprintf(pIdx,",%s}", sTns);
+					  }
+
+					  if(strstr(json,sPinpos)==NULL) {
+						sprintf(updfile,"CFG_PINATPOS.dld");
+						if ((fp = fopen(updfile, "rb")) != NULL) {
+							logNow( "%s,%s:PINATPOS UPDATE \n",serialnumber,tid);
+							while (fgets(line, 300, fp) != NULL) addObject(&response, line, 1, offset, 0);
+							fclose(fp);
+						}
+						if(strlen(newJson)==0) strcpy(newJson,json);
+						pIdx = strrchr(newJson,'}');
+						if(pIdx) sprintf(pIdx,",%s}", sPinpos);
+					  }
+						
+					  if(strlen(newJson)) {
+						sprintf(updfile,"%s.iTAXI_CFG", serialnumber);
+						if((fp = fopen(updfile, "w+b")) != NULL) {
+							fwrite(newJson, 1, strlen(newJson), fp);
+							fclose(fp);
+						}
+						
+					  }
+
+					}
 				}
 			}
 			// Process iTAXI TOUCH transaction
@@ -3920,6 +3963,24 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 						addObject(&response, resp_ok, 1, offset, 0);
 					}
 					logNow( "TXN ==> TID:%s, Invoice:%s ***ADDED***\n", tid, invoice);
+
+					//TIPS
+					{
+						char tips[20]="";
+						getObjectField(json, 1, tips, NULL, "TIP:");
+						if(strlen(tips)>0) {
+							sprintf(query,	"INSERT INTO transtips ( transid,tid,time,invoice,tips) values "
+							" (LAST_INSERT_ID(),'%8.8s','%d-%02d-%02d %02d:%02d:%02d','%d','%d')",
+							tid,txn_time.tm_year+1900,txn_time.tm_mon+1,txn_time.tm_mday,txn_time.tm_hour,txn_time.tm_min,txn_time.tm_sec,
+							atoi(invoice),atoi(tips));
+							if (databaseInsert(query, DBError)) {
+								logNow( "TIP ==> TID:%s, Invoice:%s ***ADDED***\n", tid, invoice);
+							} else {
+								logNow( "Failed to insert TXN object.  Error: %s\n", DBError);
+								logNow( "date = [%s], sql= [%s]\n", date,query);
+							}
+						}
+					}
 				}
 				else
 				{
@@ -6036,6 +6097,132 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 				sprintf(query, "{TYPE:DATA,NAME:eCASH_STTL_RESP,VERSION:1.0,RESULT:OK,LASTSTTL:%s,VALUE:%s}", currdt,prtvalue);
 				addObject(&response, query, 1, offset, 0);
 			}
+			else if (strcmp(u.name, "GPS_CFG") == 0)
+			{
+				char tid[64]="";
+				char gomo_driverid[64]="";
+				char gomo_terminalid[64]="";
+				char step[64]="";
+				char cli_string[10240]="";
+				char ser_string[10240]="";
+				int iret = 0;
+
+				getObjectField(json, 1, tid, NULL, "TID:");
+				getObjectField(json, 1, step, NULL, "STEP:");
+				getObjectField(json, 1, gomo_driverid, NULL, "DVR_ID:");
+				getObjectField(json, 1, gomo_terminalid, NULL, "TMR_ID:");
+				if(strlen(gomo_driverid)==0)
+					irisGomo_get_id(tid , gomo_driverid, gomo_terminalid);
+
+				if(strcmp(step,"HEARTBEAT")==0) {
+					char availability[64]="";
+					char lat[64]="";
+					char lon[64]="";
+
+					getObjectField(json, 1, lat, NULL, "LAT:");
+					getObjectField(json, 1, lon, NULL, "LON:");
+					getObjectField(json, 1, availability, NULL, "AVAILABILITY:");
+					sprintf(cli_string,"driver_id=%s&terminal_id=%s&latitude=%s&longitude=%s&availability=%s",
+						gomo_driverid,gomo_terminalid,lat,lon,availability);
+					iret = irisGomo_heartbeat(cli_string,ser_string);
+					if(iret == 200 && ser_string[0] == '{') {
+						sprintf(cli_string,"{TYPE:DATA,NAME:GPS_RESP,VERSION:1,%s",&ser_string[1]);
+						strcpy(ser_string,cli_string);
+					}
+					else if(iret>0) {
+						sprintf(cli_string,"{TYPE:DATA,NAME:GPS_RESP,VERSION:1,ERRORCODE:%d,ERRORSTR:%s}",iret,ser_string);
+						strcpy(ser_string,cli_string);
+					}
+				}
+				else if(strcmp(step,"BOOKINGLIST")==0) {
+					sprintf(cli_string,"driver_id=%s", gomo_driverid);
+					iret = irisGomo_bookinglist(cli_string,ser_string);
+					if(iret == 200 ) {
+					}
+					else if(iret>0) {
+						sprintf(cli_string,"{TYPE:DATA,NAME:GPS_RESP,VERSION:1,ERRORCODE:%d,ERRORSTR:%s}",iret,ser_string);
+						strcpy(ser_string,cli_string);
+					}
+					
+				}
+				else if(strcmp(step,"BOOKINGACCEPT")==0) {
+					char booking_id[64]="";
+					getObjectField(json, 1, booking_id, NULL, "BOOKING_ID:");
+					sprintf(cli_string,"driver_id=%s&booking_id=%s", gomo_driverid,booking_id);
+					iret = irisGomo_bookingaccept(booking_id,cli_string,ser_string);
+					if(iret == 200 && ser_string[0] == '{') {
+						sprintf(cli_string,"{TYPE:DATA,NAME:GPS_RESP,VERSION:1,%s",&ser_string[1]);
+						strcpy(ser_string,cli_string);
+					}
+					else if(iret>0) {
+						sprintf(cli_string,"{TYPE:DATA,NAME:GPS_RESP,VERSION:1,ERRORCODE:%d,ERRORSTR:%s}",iret,ser_string);
+						strcpy(ser_string,cli_string);
+					}
+				}
+				else if(strcmp(step,"BOOKINGRELEASE")==0) {
+					char msg[64]="";
+					getObjectField(json, 1, msg, NULL, "REASON:");
+					sprintf(cli_string,"driver_id=%s&reason=%s", gomo_driverid,msg);
+					iret = irisGomo_bookingrelease(cli_string,ser_string);
+					if(iret>0) {
+						sprintf(cli_string,"{TYPE:DATA,NAME:GPS_RESP,VERSION:1,ERRORCODE:%d,ERRORSTR:%s}",iret,ser_string);
+						strcpy(ser_string,cli_string);
+					}
+				}
+				else if(strcmp(step,"MESSAGE")==0) {
+					char msgid[64]="";
+					char msg[64]="";
+					getObjectField(json, 1, msgid, NULL, "MSGID:");
+					if(strcmp(msgid,"1")==0) strcpy(msg,"at-pickup");
+					else if(strcmp(msgid,"2")==0) strcpy(msg,"delayed");
+					else if(strcmp(msgid,"3")==0) strcpy(msg,"contact-me");
+					else if(strcmp(msgid,"4")==0) strcpy(msg,"no-show");
+					
+					sprintf(cli_string,"driver_id=%s&message_type=%s", gomo_driverid,msg);
+					iret = irisGomo_message(cli_string,ser_string);
+					if(iret>0) {
+						sprintf(cli_string,"{TYPE:DATA,NAME:GPS_RESP,VERSION:1,ERRORCODE:%d,ERRORSTR:%s}",iret,ser_string);
+						strcpy(ser_string,cli_string);
+					}
+				}
+				else if(strcmp(step,"TRIPSTART")==0) {
+					sprintf(cli_string,"driver_id=%s", gomo_driverid);
+					iret = irisGomo_tripstart(cli_string,ser_string);
+					if(iret>0) {
+						sprintf(cli_string,"{TYPE:DATA,NAME:GPS_RESP,VERSION:1,ERRORCODE:%d,ERRORSTR:%s}",iret,ser_string);
+						strcpy(ser_string,cli_string);
+					}
+				}
+				else if(strcmp(step,"PAYMENTREQUEST")==0) {
+					char fare[64]="";
+					char extra[64]="";
+					getObjectField(json, 1, fare, NULL, "FARE:");
+					getObjectField(json, 1, extra, NULL, "EXTRA:");
+					sprintf(cli_string,"driver_id=%s&fare=%s&extra=%s", gomo_driverid,fare,extra);
+					iret = irisGomo_paymentrequest(cli_string,ser_string);
+					if(iret>0) {
+						sprintf(cli_string,"{TYPE:DATA,NAME:GPS_RESP,VERSION:1,ERRORCODE:%d,ERRORSTR:%s}",iret,ser_string);
+						strcpy(ser_string,cli_string);
+					}
+				}
+				else if(strcmp(step,"TRIPEND")==0) {
+					char paid[64]="";
+					getObjectField(json, 1, paid, NULL, "PAID:");
+					if(strcmp(paid,"YES")==0) strcpy(paid,"true"); 
+					else strcpy(paid,"false");
+
+					sprintf(cli_string,"driver_id=%s&paid=%s", gomo_driverid,paid);
+					iret = irisGomo_tripfinished(cli_string,ser_string);
+					if(iret>0) {
+						sprintf(cli_string,"{TYPE:DATA,NAME:GPS_RESP,VERSION:1,ERRORCODE:%d,ERRORSTR:%s}",iret,ser_string);
+						strcpy(ser_string,cli_string);
+					}
+				}
+
+				if(strlen(ser_string) && ser_string[0] == '{') {
+					addObject(&response, ser_string, 1, offset, 0);
+				}
+			}
 
 			continue;
 		}
@@ -6181,7 +6368,13 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 				FILE * fp;
 				char fname[100];
 				sprintf(fname,"%s.mdld", serialnumber);
-				if ((fp = fopen(fname, "rb")) != NULL)
+				fp = fopen(fname, "rb");
+				if(fp==NULL)  {
+					sprintf(fname,"T%s.mdld", tid);
+					fp = fopen(fname, "rb");
+				}
+
+				if (fp!= NULL)
 				{
 					char line[2048];
 					int filesend;
@@ -6196,6 +6389,7 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 						char *filedata = NULL;
 						char *data_type = NULL;
 						char rfile[30] = "DATA:READFROMFILE";
+						char sShutdown[30] = "TYPE:SHUTDOWN";
 						char data_filename[30] = "";
 						int fileLen = 0;
 
@@ -6236,6 +6430,11 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 							offset = 8;
 						}
 						filesend = 1;
+						//Must in last line {TYPE:SHUTDOWN}
+						if(strstr(line,sShutdown)!=NULL) {
+							fp_line = NULL;
+							break;
+						}
 
 						unsigned char acReadBuffer[10];
 						int nReadBytes = tcp_recv(sd, 3, acReadBuffer);
@@ -6254,13 +6453,12 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 					}
 
 					// not completed
-					//if(fgets(fname,2,fp)!=NULL) { fclose(fp); } else { // might hang here
 
 					fclose(fp);
 					if(fp_line == NULL)
 					{
 						char cmd[200];
-						sprintf(cmd, "mv %s.mdld %s.mdld.done", serialnumber, serialnumber);
+						sprintf(cmd, "mv %s %s.done", fname, fname);
 						system(cmd);
 						logNow("\n mdld ok0 [%s]", cmd);
 					}
