@@ -6100,19 +6100,38 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 			else if (strcmp(u.name, "GPS_CFG") == 0)
 			{
 				char tid[64]="";
-				char gomo_driverid[64]="";
-				char gomo_terminalid[64]="";
+				char gomo_driverid[64]="TA0001";
+				char gomo_terminalid[64]="00000001";
 				char step[64]="";
 				char cli_string[10240]="";
 				char ser_string[10240]="";
+				char sqlquery[1024]="";
 				int iret = 0;
 
 				getObjectField(json, 1, tid, NULL, "TID:");
 				getObjectField(json, 1, step, NULL, "STEP:");
-				getObjectField(json, 1, gomo_driverid, NULL, "DVR_ID:");
-				getObjectField(json, 1, gomo_terminalid, NULL, "TMR_ID:");
-				if(strlen(gomo_driverid)==0)
-					irisGomo_get_id(tid , gomo_driverid, gomo_terminalid);
+				//getObjectField(json, 1, gomo_driverid, NULL, "DVR_ID:");
+				//getObjectField(json, 1, gomo_terminalid, NULL, "TMR_ID:");
+
+				sprintf(sqlquery," select driverid, terminalid from gomo_driverid where tid = '%s' ", tid);
+				dbStart();
+				#ifdef USE_MYSQL
+				if (mysql_real_query(dbh, sqlquery, strlen(sqlquery)) == 0) // success
+				{
+					MYSQL_RES * res;
+					MYSQL_ROW row;
+					if (res = mysql_store_result(dbh))
+					{
+						if (row = mysql_fetch_row(res))
+						{
+							if (row[0]) strcpy(gomo_driverid, row[0]);
+							if (row[1]) strcpy(gomo_terminalid,row[1]);
+						}
+					}
+					mysql_free_result(res);
+				}
+				#endif
+				dbEnd();
 
 				if(strcmp(step,"HEARTBEAT")==0) {
 					char availability[64]="";
@@ -6137,6 +6156,17 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 				else if(strcmp(step,"BOOKINGLIST")==0) {
 					sprintf(cli_string,"driver_id=%s", gomo_driverid);
 					iret = irisGomo_bookinglist(cli_string,ser_string);
+					if(iret == 200 ) {
+					}
+					else if(iret>0) {
+						sprintf(cli_string,"{TYPE:DATA,NAME:GPS_RESP,VERSION:1,ERRORCODE:%d,ERRORSTR:%s}",iret,ser_string);
+						strcpy(ser_string,cli_string);
+					}
+					
+				}
+				else if(strcmp(step,"NEWBOOKINGLIST")==0) {
+					sprintf(cli_string,"driver_id=%s", gomo_driverid);
+					iret = irisGomo_newbookinglist(cli_string,ser_string);
 					if(iret == 200 ) {
 					}
 					else if(iret>0) {

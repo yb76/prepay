@@ -9,6 +9,7 @@
 
 static char sUrl_heartbeat[256]="";
 static char sUrl_bookinglist[256]="";
+static char sUrl_newbookinglist[256]="";
 static char sUrl_bookingaccept[256]="";
 static char sUrl_bookingrelease[256]="";
 static char sUrl_message[256]="";
@@ -20,6 +21,15 @@ struct MemoryStruct {
     char *memory;
     size_t size;
   };
+
+static int jsoneq(const char *json, jsmntok_t *tok, const char *s) {
+        if (tok->type == JSMN_STRING && (int) strlen(s) == tok->end - tok->start &&
+                        strncmp(json + tok->start, s, tok->end - tok->start) == 0) {
+                return 0;
+        }
+        return -1;
+}
+
 
 static void
 stripQuotes (char *src, char *dest)
@@ -80,6 +90,7 @@ int irisGomo_call(char *url,char* calltype,char *cli_string,char **resp)
   CURLcode res;
   struct MemoryStruct chunk;
   chunk.memory = malloc(1);  /* will be grown as needed by the realloc above */ 
+  strcpy(chunk.memory,"");
   chunk.size = 0;    /* no data at this point */ 
 
   if(cli_string==NULL || strlen(cli_string)==0) {
@@ -131,24 +142,29 @@ int irisGomo_call(char *url,char* calltype,char *cli_string,char **resp)
   return(http_code);
 }
 
+/*
 int irisGomo_get_id(char *tid ,char* gomo_driverid, char *gomo_terminalid)
 {
 	strcpy(gomo_driverid, "TA0001");
 	strcpy(gomo_terminalid, "00000001");
 	return(0);
 }
+*/
 
 
 int irisGomo_init()
 {
-	strcpy(sUrl_heartbeat,"http://gomoterminalproxy.elasticbeanstalk.com:80/v1/heartbeat/heartbeat");
-	strcpy(sUrl_bookinglist,"http://dev.terminal.gm-mobile.com:80/v1/bookings/bookings");
-	strcpy(sUrl_bookingaccept,"http://dev.terminal.gm-mobile.com:80/v1/bookings/accept");
-	strcpy(sUrl_bookingrelease,"http://dev.terminal.gm-mobile.com:80/v1/bookings/release");
-	strcpy(sUrl_message,"http://dev.terminal.gm-mobile.com:80/v1/messaging/message-passenger");
-	strcpy(sUrl_tripstart,"http://dev.terminal.gm-mobile.com:80/v1/trips/start");
-	strcpy(sUrl_paymentrequest,"http://dev.terminal.gm-mobile.com:80/v1/payments/request");
-	strcpy(sUrl_tripfinished,"http://dev.terminal.gm-mobile.com:80/v1/trips/finished");
+	char prefix[256] = "http://dev.terminal.gm-mobile.com:80/v2";
+
+	sprintf(sUrl_heartbeat,"%s/heartbeat/heartbeat",prefix);
+	sprintf(sUrl_newbookinglist,"%s/bookings/new-bookings",prefix);
+	sprintf(sUrl_bookinglist,"%s/bookings/bookings",prefix);
+	sprintf(sUrl_bookingaccept,"%s/bookings/accept",prefix);
+	sprintf(sUrl_bookingrelease,"%s/bookings/release",prefix);
+	sprintf(sUrl_message,"%s/messaging/message-passenger",prefix);
+	sprintf(sUrl_tripstart,"%s/trips/start",prefix);
+	sprintf(sUrl_paymentrequest,"%s/payments/request",prefix);
+	sprintf(sUrl_tripfinished,"%s/trips/finished",prefix);
 	return(0);
 }
 
@@ -217,6 +233,115 @@ int irisGomo_convertJson_bookinglist(char *ser_string)
 		}
 		
 	}
+	strcat(iris_json,"}");
+
+	//logNow("newjson = [%s]", iris_json);
+	strcpy(ser_string,iris_json);
+	return(0);
+}
+
+int irisGomo_convertJson_newbookinglist(char *ser_string)
+{
+	char json[10240] = "";
+	char iris_json[10240] = "";
+	jsmn_parser p;
+	jsmntok_t t[1024]; /* We expect no more than 1024 tokens */
+	int i = 0,j=0,k=1;
+	int icnt = 0;
+	int booking_cnt = 0;
+	int inArrayCurrent=0;
+	int inArrayNew=0;
+
+	strcpy( json,ser_string);
+	jsmn_init(&p);
+	icnt = jsmn_parse(&p, json, strlen(json), t, sizeof(t)/sizeof(t[0]));
+	if (icnt < 0) {
+		logNow("GOMO:Failed to parse JSON: %d\n", icnt);
+		return 1;
+	}
+
+	/* Assume the top-level element is an object or array */
+	if (icnt < 1 ) {
+		return -1;
+	}
+
+	if(t[0].type == JSMN_OBJECT && t[1].type == JSMN_STRING && t[2].type == JSMN_ARRAY) {
+	        //t[1] : "currentBookings"
+		booking_cnt = t[2].size;
+	} else {
+		return(-1);
+	}
+
+	sprintf(iris_json,"{TYPE:DATA,NAME:GPS_RESP,STEP:NEWBOOKINGLIST,COUNT:%d",booking_cnt); 
+
+	// get current booking
+	for(i=1;i<icnt;i++) {
+		char irisjson_tag[128]="";
+		char irisjson_value[128]="";
+		char stmp[128];
+
+		if( t[i].type == JSMN_PRIMITIVE) {
+		} else if ( t[i].type == JSMN_OBJECT) {
+		} else if ( t[i].type == JSMN_ARRAY) {
+
+		} else if ( t[i].type == JSMN_STRING) {
+			char sType[64];
+			sprintf(sType,"%.*s",t[i].end-t[i].start,json+t[i].start);
+			if(strcmp(sType,"currentBookings")==0) {
+				i++;
+				booking_cnt == t[i].size;	//array
+				i++;
+				for(k=1;k<=booking_cnt;k++,i++) {
+					if( t[i].type == JSMN_PRIMITIVE) {
+						sprintf(stmp,"%.*s",t[i].end-t[i].start,json+t[i].start);
+						sprintf(irisjson_value,",oid_%d:%s",k,stmp);
+						strcat(iris_json,irisjson_value);
+					}
+				}
+				if(booking_cnt>=1) i--;
+
+			}
+			else if(strcmp(sType,"newBookings")==0) {
+				i++;
+				for(k=1;i<icnt;k++,i++) { // to the end
+					strcpy(irisjson_value,"");
+					strcpy(irisjson_tag,"");
+
+					if( t[i].type == JSMN_PRIMITIVE) {
+						sprintf(stmp,"%.*s",t[i].end-t[i].start,json+t[i].start);
+						sprintf(irisjson_value,"%s",stmp);
+					} else if ( t[i].type == JSMN_OBJECT) {
+						j++;
+					} else if ( t[i].type == JSMN_ARRAY) {
+					} else if ( t[i].type == JSMN_STRING) {
+						sprintf(stmp,"%.*s",t[i].end-t[i].start,json+t[i].start);
+						if( t[i].size == 1) {
+							sprintf(irisjson_tag,"%s",stmp);
+						} else {
+							char *p = stmp;
+							while(*p!=0) {
+								if(*p == ',') *p = '%'; //remove comma
+								p++;
+							}
+							sprintf(irisjson_value,"%s",stmp);
+						}
+					}
+					if(strlen(irisjson_tag)) {
+						sprintf(stmp,",%s_%d:", irisjson_tag,j);
+						strcat(iris_json,stmp);
+					}
+					if(strlen(irisjson_value)) {
+						strcat(iris_json,irisjson_value);
+					}
+
+				}
+
+			}
+
+		}
+
+	}
+
 	strcat(iris_json,"}");
 
 	//logNow("newjson = [%s]", iris_json);
@@ -346,6 +471,44 @@ int irisGomo_bookinglist(char *cli_string,char *ser_string)
 			logNow("GOMO: bookinglist recv[%s]\n", ser_string);
 			if(strlen(ser_string)) {
 				irisGomo_convertJson_bookinglist(ser_string);
+			}
+		}
+		
+	}
+	else if(iret>0) {
+		if(resp) {
+			strcpy(ser_string,resp);
+			char *p = ser_string;
+			while(*p!=0) {
+				if(*p == ',') *p = ' '; //remove comma
+				p++;
+			}
+		}
+	}
+	if(resp) {
+		free(resp);
+		resp = NULL;
+	}
+	return(iret);
+
+}
+
+int irisGomo_newbookinglist(char *cli_string,char *ser_string)
+{
+	int iret = 0;
+	char *resp = NULL;
+
+	strcpy(ser_string,"");
+	logNow("GOMO: new bookinglist sending[%s]\n", cli_string);
+	if(strlen(sUrl_newbookinglist)==0) irisGomo_init();
+
+	iret =  irisGomo_call(sUrl_newbookinglist,"GET",cli_string,&resp);
+	if(iret==200) {
+		if(resp) {
+			strcpy(ser_string,resp);
+			logNow("GOMO: new bookinglist recv[%s]\n", ser_string);
+			if(strlen(ser_string)) {
+				irisGomo_convertJson_newbookinglist(ser_string);
 			}
 		}
 		
