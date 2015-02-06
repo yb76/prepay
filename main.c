@@ -6097,6 +6097,7 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 				sprintf(query, "{TYPE:DATA,NAME:eCASH_STTL_RESP,VERSION:1.0,RESULT:OK,LASTSTTL:%s,VALUE:%s}", currdt,prtvalue);
 				addObject(&response, query, 1, offset, 0);
 			}
+#ifdef __GPS
 			else if (strcmp(u.name, "GPS_CFG") == 0)
 			{
 				char tid[64]="";
@@ -6235,6 +6236,17 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 						strcpy(ser_string,cli_string);
 					}
 				}
+				else if(strcmp(step,"PAYMENTSTATUS")==0) {
+					sprintf(cli_string,"driver_id=%s", gomo_driverid);
+					iret = irisGomo_paymentstatus(cli_string,ser_string);
+					if(iret == 200 ) {
+					}
+					else if(iret>0) {
+						sprintf(cli_string,"{TYPE:DATA,NAME:GPS_RESP,VERSION:1,ERRORCODE:%d,ERRORSTR:%s}",iret,ser_string);
+						strcpy(ser_string,cli_string);
+					}
+				}
+
 				else if(strcmp(step,"TRIPEND")==0) {
 					char paid[64]="";
 					getObjectField(json, 1, paid, NULL, "PAID:");
@@ -6253,6 +6265,7 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 					addObject(&response, ser_string, 1, offset, 0);
 				}
 			}
+#endif
 
 			continue;
 		}
@@ -6397,11 +6410,50 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 	if (iPAY_CFG_RECEIVED == 1 && dldexist == 0 ) { // local download
 				FILE * fp;
 				char fname[100];
+				int downloadqueue = 0;
+				char dq_id[32]="";
+				char dq_fname[64]="";
+
 				sprintf(fname,"%s.mdld", serialnumber);
 				fp = fopen(fname, "rb");
 				if(fp==NULL)  {
 					sprintf(fname,"T%s.mdld", tid);
 					fp = fopen(fname, "rb");
+				}
+
+				if(fp==NULL) {
+					char queue[1024]="";
+
+					// Check if we have the service provider URLs available
+					sprintf(query, "select id,filename from downloadqueue where tid = '%s' and queueid = ( select min(queueid) from downloadqueue where tid = '%s' and endtime is null);", tid,tid);
+					dbStart();
+					#ifdef USE_MYSQL
+					if (mysql_real_query(dbh, query, strlen(query)) == 0) // success
+					{
+						MYSQL_RES * res;
+						MYSQL_ROW row;
+
+						if (res = mysql_store_result(dbh))
+						{
+							if (row = mysql_fetch_row(res))
+							{
+								if (row[0])
+								{
+									strcpy(dq_id, row[0]);
+									strcpy(dq_fname, row[1]);
+								}
+							}
+							mysql_free_result(res);
+						}
+					}
+					#endif
+					dbEnd();
+
+					if(strlen(dq_fname)) {
+						downloadqueue = 1;
+						strcpy( fname, dq_fname);
+						fp = fopen(fname, "rb");
+					}
 				}
 
 				if (fp!= NULL)
@@ -6487,10 +6539,22 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 					fclose(fp);
 					if(fp_line == NULL)
 					{
-						char cmd[200];
-						sprintf(cmd, "mv %s %s.done", fname, fname);
-						system(cmd);
-						logNow("\n mdld ok0 [%s]", cmd);
+						if(downloadqueue) {
+							char DBError[200];
+							sprintf(query, "UPDATE downloadqueue set endtime = now() where id = %s", dq_id);
+							if (databaseInsert(query, DBError))
+								logNow( "DOWNLOADQUEUE ==> ID:%s **RECORDED**\n", dq_id);
+							else
+							{
+								logNow( "Failed to update 'DOWNLOADQUEUE' table.  Error: %s\n", DBError);
+							}
+						} else {
+							char cmd[200];
+							sprintf(cmd, "mv %s %s.done", fname, fname);
+							system(cmd);
+							logNow("\n mdld ok0 [%s]", cmd);
+						}
+					
 					}
 					if(response) free(response); 
 
