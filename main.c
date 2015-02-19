@@ -6098,7 +6098,7 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 				addObject(&response, query, 1, offset, 0);
 			}
 #ifdef __GPS
-			else if (strcmp(u.name, "GPS_CFG") == 0)
+			else if (strcmp(u.name, "GPS_REQ") == 0)
 			{
 				char tid[64]="";
 				char gomo_driverid[64]="TA0001";
@@ -6134,14 +6134,14 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 				#endif
 				dbEnd();
 
-				if(strcmp(step,"HEARTBEAT")==0) {
+				if(strcmp(step,"HB")==0) { /* heart beat*/
 					char availability[64]="";
 					char lat[64]="";
 					char lon[64]="";
 
 					getObjectField(json, 1, lat, NULL, "LAT:");
 					getObjectField(json, 1, lon, NULL, "LON:");
-					getObjectField(json, 1, availability, NULL, "AVAILABILITY:");
+					getObjectField(json, 1, availability, NULL, "AV:");
 					sprintf(cli_string,"driver_id=%s&terminal_id=%s&latitude=%s&longitude=%s&availability=%s",
 						gomo_driverid,gomo_terminalid,lat,lon,availability);
 					iret = irisGomo_heartbeat(cli_string,ser_string);
@@ -6154,7 +6154,7 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 						strcpy(ser_string,cli_string);
 					}
 				}
-				else if(strcmp(step,"BOOKINGLIST")==0) {
+				else if(strcmp(step,"BL")==0) { /* booking list*/
 					sprintf(cli_string,"driver_id=%s", gomo_driverid);
 					iret = irisGomo_bookinglist(cli_string,ser_string);
 					if(iret == 200 ) {
@@ -6165,7 +6165,7 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 					}
 					
 				}
-				else if(strcmp(step,"NEWBOOKINGLIST")==0) {
+				else if(strcmp(step,"NB")==0) { /* new booking list*/
 					sprintf(cli_string,"driver_id=%s", gomo_driverid);
 					iret = irisGomo_newbookinglist(cli_string,ser_string);
 					if(iret == 200 ) {
@@ -6176,9 +6176,9 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 					}
 					
 				}
-				else if(strcmp(step,"BOOKINGACCEPT")==0) {
+				else if(strcmp(step,"BA")==0) { /* booking accept*/
 					char booking_id[64]="";
-					getObjectField(json, 1, booking_id, NULL, "BOOKING_ID:");
+					getObjectField(json, 1, booking_id, NULL, ",ID:");
 					sprintf(cli_string,"driver_id=%s&booking_id=%s", gomo_driverid,booking_id);
 					iret = irisGomo_bookingaccept(booking_id,cli_string,ser_string);
 					if(iret == 200 && ser_string[0] == '{') {
@@ -6190,7 +6190,7 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 						strcpy(ser_string,cli_string);
 					}
 				}
-				else if(strcmp(step,"BOOKINGRELEASE")==0) {
+				else if(strcmp(step,"BR")==0) { /* booking release */
 					char msg[64]="";
 					getObjectField(json, 1, msg, NULL, "REASON:");
 					sprintf(cli_string,"driver_id=%s&reason=%s", gomo_driverid,msg);
@@ -6200,7 +6200,7 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 						strcpy(ser_string,cli_string);
 					}
 				}
-				else if(strcmp(step,"MESSAGE")==0) {
+				else if(strcmp(step,"MG")==0) { /* message */
 					char msgid[64]="";
 					char msg[64]="";
 					getObjectField(json, 1, msgid, NULL, "MSGID:");
@@ -6216,7 +6216,7 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 						strcpy(ser_string,cli_string);
 					}
 				}
-				else if(strcmp(step,"TRIPSTART")==0) {
+				else if(strcmp(step,"TS")==0) { /* trip start */
 					sprintf(cli_string,"driver_id=%s", gomo_driverid);
 					iret = irisGomo_tripstart(cli_string,ser_string);
 					if(iret>0) {
@@ -6224,7 +6224,7 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 						strcpy(ser_string,cli_string);
 					}
 				}
-				else if(strcmp(step,"PAYMENTREQUEST")==0) {
+				else if(strcmp(step,"PQ")==0) { /* payment request */
 					char fare[64]="";
 					char extra[64]="";
 					getObjectField(json, 1, fare, NULL, "FARE:");
@@ -6236,7 +6236,7 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 						strcpy(ser_string,cli_string);
 					}
 				}
-				else if(strcmp(step,"PAYMENTSTATUS")==0) {
+				else if(strcmp(step,"PS")==0) { /* payment status*/
 					sprintf(cli_string,"driver_id=%s", gomo_driverid);
 					iret = irisGomo_paymentstatus(cli_string,ser_string);
 					if(iret == 200 ) {
@@ -6247,7 +6247,7 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 					}
 				}
 
-				else if(strcmp(step,"TRIPEND")==0) {
+				else if(strcmp(step,"TE")==0) { /* trip end */
 					char paid[64]="";
 					getObjectField(json, 1, paid, NULL, "PAID:");
 					if(strcmp(paid,"YES")==0) strcpy(paid,"true"); 

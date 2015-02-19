@@ -15,6 +15,7 @@ static char sUrl_bookingrelease[256]="";
 static char sUrl_message[256]="";
 static char sUrl_tripstart[256]="";
 static char sUrl_paymentrequest[256]="";
+static char sUrl_paymentstatus[256]="";
 static char sUrl_tripfinished[256]="";
 
 struct MemoryStruct {
@@ -164,8 +165,33 @@ int irisGomo_init()
 	sprintf(sUrl_message,"%s/messaging/message-passenger",prefix);
 	sprintf(sUrl_tripstart,"%s/trips/start",prefix);
 	sprintf(sUrl_paymentrequest,"%s/payments/request",prefix);
+	sprintf(sUrl_paymentstatus,"%s/payments/status",prefix);
 	sprintf(sUrl_tripfinished,"%s/trips/finished",prefix);
 	return(0);
+}
+
+int irisGomo_convert_tag(char *tag)
+{
+	if(tag==NULL) return(0);
+	if(strcmp(tag,"nextAvailable")==0) {
+		strcpy(tag,"");
+	}
+	else if(strcmp(tag,"schedule")==0) {
+		strcpy(tag,"");
+	}
+	else if(strcmp(tag,"passengerCount")==0) {
+		strcpy(tag,"pc");
+	}
+	else if(strcmp(tag,"fromSuburb")==0) {
+		strcpy(tag,"fs");
+	}
+	else if(strcmp(tag,"toSuburb")==0) {
+		strcpy(tag,"ts");
+	}
+	else if(strcmp(tag,"passengerName")==0) {
+		strcpy(tag,"nm");
+	}
+
 }
 
 int irisGomo_convertJson_bookinglist(char *ser_string)
@@ -202,7 +228,7 @@ int irisGomo_convertJson_bookinglist(char *ser_string)
 		return(-1);
 	}
 
-	sprintf(iris_json,"{TYPE:DATA,NAME:GPS_RESP,STEP:BOOKINGLIST,COUNT:%d",booking_cnt); 
+	sprintf(iris_json,"{TYPE:DATA,NAME:GPS_RESP,STEP:BL,COUNT:%d",booking_cnt); 
 
 	for(i=1;i<icnt;i++) {
 		char irisjson_tag[128]="";
@@ -225,9 +251,13 @@ int irisGomo_convertJson_bookinglist(char *ser_string)
 			}
 		}
 		if(strlen(irisjson_tag)) {
-			sprintf(stmp,",%s_%d:", irisjson_tag, j);
-			strcat(iris_json,stmp);
+			irisGomo_convert_tag(irisjson_tag);
+			if(strlen(irisjson_tag)) {
+				sprintf(stmp,",%s_%d:", irisjson_tag, j);
+				strcat(iris_json,stmp);
+			} else i++; // tag is not needed
 		}
+
 		if(strlen(irisjson_value)) {
 			strcat(iris_json,irisjson_value);
 		}
@@ -272,7 +302,7 @@ int irisGomo_convertJson_newbookinglist(char *ser_string)
 		return(-1);
 	}
 
-	sprintf(iris_json,"{TYPE:DATA,NAME:GPS_RESP,STEP:NEWBOOKINGLIST,COUNT:%d",booking_cnt); 
+	sprintf(iris_json,"{TYPE:DATA,NAME:GPS_RESP,STEP:NB,COUNT:%d",booking_cnt); 
 
 	// get current booking
 	for(i=1;i<icnt;i++) {
@@ -327,9 +357,13 @@ int irisGomo_convertJson_newbookinglist(char *ser_string)
 						}
 					}
 					if(strlen(irisjson_tag)) {
-						sprintf(stmp,",%s_%d:", irisjson_tag,j);
-						strcat(iris_json,stmp);
+						irisGomo_convert_tag(irisjson_tag);
+						if(strlen(irisjson_tag)) {
+							sprintf(stmp,",%s_%d:", irisjson_tag,j);
+							strcat(iris_json,stmp);
+						} else i++;
 					}
+
 					if(strlen(irisjson_value)) {
 						strcat(iris_json,irisjson_value);
 					}
@@ -378,7 +412,7 @@ int irisGomo_convertJson_bookingaccept(char *ser_string)
 		return(-1);
 	}
 
-	sprintf(iris_json,"{TYPE:DATA,NAME:GPS_RESP,STEP:BOOKINGACCEPT");
+	sprintf(iris_json,"{TYPE:DATA,NAME:GPS_RESP,STEP:BA");
 
 	for(i=1;i<icnt;i++) {
 		char irisjson_tag[128]="";
@@ -405,8 +439,83 @@ int irisGomo_convertJson_bookingaccept(char *ser_string)
 			}
 		}
 		if(strlen(irisjson_tag)) {
-			sprintf(stmp,",%s:", irisjson_tag);
-			strcat(iris_json,stmp);
+			irisGomo_convert_tag(irisjson_tag);
+			if(strlen(irisjson_tag)) {
+				sprintf(stmp,",%s:", irisjson_tag);
+				strcat(iris_json,stmp);
+			} else i++;
+		}
+		if(strlen(irisjson_value)) {
+			strcat(iris_json,irisjson_value);
+		}
+		
+	}
+	strcat(iris_json,"}");
+
+	//logNow("newjson = [%s]", iris_json);
+	strcpy(ser_string,iris_json);
+	return(0);
+}
+
+int irisGomo_convertJson(char *step,char *ser_string)
+{
+	char json[10240] = "";
+	char iris_json[10240] = "";
+	jsmn_parser p;
+	jsmntok_t t[1024]; /* We expect no more than 1024 tokens */
+	int i = 0,j=1;
+	int icnt = 0;
+
+	strcpy( json,ser_string);
+	jsmn_init(&p);
+	icnt = jsmn_parse(&p, json, strlen(json), t, sizeof(t)/sizeof(t[0]));
+	if (icnt < 0) {
+		logNow("GOMO:Failed to parse JSON: %d\n", icnt);
+		return 1;
+	}
+
+	/* Assume the top-level element is an object or array */
+	if (icnt < 1 ) {
+		return -1;
+	}
+
+	if(t[0].type == JSMN_OBJECT) {
+	} else {
+		return(-1);
+	}
+
+	sprintf(iris_json,"{TYPE:DATA,NAME:GPS_RESP,STEP:%s,ERRORCODE:200",step);
+
+	for(i=1;i<icnt;i++) {
+		char irisjson_tag[128]="";
+		char irisjson_value[128]="";
+		char stmp[128];
+
+		if( t[i].type == JSMN_PRIMITIVE) {
+			sprintf(stmp,"%.*s",t[i].end-t[i].start,json+t[i].start);
+			sprintf(irisjson_value,"%s",stmp);
+		} else if ( t[i].type == JSMN_OBJECT) {
+		} else if ( t[i].type == JSMN_ARRAY) {
+		} else if ( t[i].type == JSMN_STRING) {
+			sprintf(stmp,"%.*s",t[i].end-t[i].start,json+t[i].start);
+
+			if( t[i].size == 1) {
+				sprintf(irisjson_tag,"%s",stmp);
+			} else {
+				char *p = stmp;
+				while(*p!=0) {
+					if(*p == ',') *p = '%'; //remove comma
+					p++;
+				}
+				sprintf(irisjson_value,"%s",stmp);
+			}
+		}
+		if(strlen(irisjson_tag)) {
+			irisGomo_convert_tag(irisjson_tag);
+			if(strlen(irisjson_tag)) {
+				sprintf(stmp,",%s:", irisjson_tag);
+				strcat(iris_json,stmp);
+			} else i++;
 		}
 		if(strlen(irisjson_value)) {
 			strcat(iris_json,irisjson_value);
@@ -432,7 +541,10 @@ int irisGomo_heartbeat(char *cli_string,char *ser_string)
 	iret =  irisGomo_call(sUrl_heartbeat,"PUT",cli_string,&resp);
 	if(iret==200) {
 		if(resp) {
-			stripQuotes(resp, ser_string);
+			strcpy(ser_string,resp);
+			if(strlen(ser_string)) {
+				irisGomo_convertJson("HB",ser_string);
+			}
 			logNow("GOMO: heartbeat recv[%s]\n", ser_string);
 		}
 		
@@ -673,6 +785,43 @@ int irisGomo_paymentrequest(char *cli_string,char *ser_string)
 
 	iret =  irisGomo_call(sUrl_paymentrequest,"POST",cli_string,&resp);
 	if(iret>0) {
+		if(resp) {
+			strcpy(ser_string,resp);
+			char *p = ser_string;
+			while(*p!=0) {
+				if(*p == ',') *p = ' '; //remove comma
+				p++;
+			}
+		}
+	}
+
+	if(resp) {
+		free(resp);
+		resp = NULL;
+	}
+	return(iret);
+}
+
+int irisGomo_paymentstatus(char *cli_string,char *ser_string)
+{
+	int iret = 0;
+	char *resp = NULL;
+
+	strcpy(ser_string,"");
+	logNow("GOMO: payment status sending[%s]\n", cli_string);
+
+	if(strlen(sUrl_paymentstatus)==0) irisGomo_init();
+
+	iret =  irisGomo_call(sUrl_paymentstatus,"GET",cli_string,&resp);
+	if(iret==200) {
+		if(resp) {
+			strcpy(ser_string,resp);
+			if(strlen(ser_string)) {
+				irisGomo_convertJson("PQ",ser_string);
+			}
+			logNow("GOMO:payment status recv[%s]\n", ser_string);
+		}
+	} else if (iret>0) {
 		if(resp) {
 			strcpy(ser_string,resp);
 			char *p = ser_string;
