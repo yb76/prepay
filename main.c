@@ -6227,9 +6227,11 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 				else if(strcmp(step,"PQ")==0) { /* payment request */
 					char fare[64]="";
 					char extra[64]="";
+					char pay[64]="";
 					getObjectField(json, 1, fare, NULL, "FARE:");
 					getObjectField(json, 1, extra, NULL, "EXTRA:");
-					sprintf(cli_string,"driver_id=%s&fare=%s&extra=%s", gomo_driverid,fare,extra);
+					getObjectField(json, 1, pay, NULL, "PAY:");
+					sprintf(cli_string,"driver_id=%s&payment_method=%s&fare=%s&extra=%s", gomo_driverid,pay,fare,extra);
 					iret = irisGomo_paymentrequest(cli_string,ser_string);
 					if(iret>0) {
 						sprintf(cli_string,"{TYPE:DATA,NAME:GPS_RESP,VERSION:1,ERRORCODE:%d,ERRORSTR:%s}",iret,ser_string);
