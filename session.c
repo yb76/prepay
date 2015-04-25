@@ -129,12 +129,14 @@ MYSQL * get_new_mysql_dbh()
         // mysql initialisation
         if ((dbh = mysql_init(NULL)) == NULL)
         {
+		logNow("mysql init error: [%s]\n", mysql_error(dbh));
                 return(NULL);
         }
 
         // mysql database connection
         if (!mysql_real_connect(dbh, databaseIPAddress, user, password, database, 0, unix_socket, 0))
         {
+		logNow("mysql real connect error: [%s]\n", mysql_error(dbh));
                 return(NULL);
         }
 

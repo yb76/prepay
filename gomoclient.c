@@ -31,6 +31,13 @@ static int jsoneq(const char *json, jsmntok_t *tok, const char *s) {
         return -1;
 }
 
+long long current_timestamp() {
+    struct timeval te;
+    gettimeofday(&te, NULL); // get current time
+    long long milliseconds = te.tv_sec*1000LL + te.tv_usec/1000; // caculate milliseconds
+    // printf("milliseconds: %lld\n", milliseconds);
+    return milliseconds;
+}
 
 static void
 stripQuotes (char *src, char *dest)
@@ -106,6 +113,8 @@ int irisGomo_call(char *url,char* calltype,char *cli_string,char **resp)
   }
 
   long http_code = 0;
+#define REAL 1
+#ifdef REAL
   curl = curl_easy_init();
   if(curl) {
  /* we want to use our own read function */ 
@@ -116,7 +125,10 @@ int irisGomo_call(char *url,char* calltype,char *cli_string,char **resp)
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, cli_string);
 
     /* Now run off and do what you've been told! */ 
+long long ts1= current_timestamp();
     res = curl_easy_perform(curl);
+long long ts2= current_timestamp();
+      logNow( "GOMO:curl_easy_perform() time: %.3f\n", (ts2-ts1)/1000.0);
     /* Check for errors */ 
     if(res != CURLE_OK) {
       logNow( "GOMO:curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
@@ -139,6 +151,11 @@ int irisGomo_call(char *url,char* calltype,char *cli_string,char **resp)
     /* always cleanup */ 
     curl_easy_cleanup(curl);
   }
+#else
+      http_code = 200;
+      *resp = malloc(1024);
+      strcpy(*resp,"status:ok,newBookingsAvailable:888");
+#endif
 
   return(http_code);
 }
@@ -155,7 +172,8 @@ int irisGomo_get_id(char *tid ,char* gomo_driverid, char *gomo_terminalid)
 
 int irisGomo_init()
 {
-	char prefix[256] = "http://dev.terminal.gm-mobile.com:80/v2";
+	//char prefix[256] = "http://dev.terminal.gm-mobile.com:80/v2";
+	char prefix[256] = "http://stage.terminal.gm-mobile.com/terminal";
 
 	sprintf(sUrl_heartbeat,"%s/heartbeat/heartbeat",prefix);
 	sprintf(sUrl_newbookinglist,"%s/bookings/new-bookings",prefix);
