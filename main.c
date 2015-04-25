@@ -97,6 +97,17 @@ int counter = 0;
 
 int background_update = 0;
 
+#define PREPAY_ERRCODE_EMPTY_NAME	101
+#define PREPAY_ERRCODE_EMPTY_EMAIL	102
+#define PREPAY_ERRCODE_EMPTY_MOBILE	103
+#define PREPAY_ERRCODE_EMPTY_CARDTYPE	104
+#define PREPAY_ERRCODE_EMPTY_CARD	110
+#define PREPAY_ERRCODE_EMPTY_AMOUNT	111
+#define PREPAY_ERRCODE_AMOUNT_ERROR	112
+#define PREPAY_ERRCODE_CARD_NOT_EXIST	120
+
+#define PREPAY_ERRCODE_DB_ERROR	181
+
 //// Constants /////////////////////////////////////////////////////////
 
 /*
@@ -369,7 +380,7 @@ static long databaseCount(char * query)
 		{
 			if (row = mysql_fetch_row(res))
 			{
-				if(strlen(row[0])) count = atol(row[0]);
+				if(row[0] && strlen(row[0])) count = atol(row[0]);
 			}
 			mysql_free_result(res);
 		}
@@ -1480,50 +1491,61 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 			getObjectField(json, 1, iss_email, NULL, "Email:");
 			getObjectField(json, 1, iss_cardtype, NULL, "CardType:");
 
-			if(ok && strlen(iss_name)==0) { ok = 0; err = 101; }
-			if(ok && strlen(iss_mobile)==0) { ok = 0;  err = 102;}
-			if(ok && strlen(iss_email)==0) { ok = 0;  err = 103;}
-			if(ok && strlen(iss_cardtype)==0) { ok = 0;  err = 104;}
+			if(ok && strlen(iss_name)==0) { ok = 0; err =PREPAY_ERRCODE_EMPTY_NAME; }
+			if(ok && strlen(iss_mobile)==0) { ok = 0;  err = PREPAY_ERRCODE_EMPTY_MOBILE;}
+			if(ok && strlen(iss_email)==0) { ok = 0;  err = PREPAY_ERRCODE_EMPTY_EMAIL;}
+			if(ok && strlen(iss_cardtype)==0) { ok = 0;  err =PREPAY_ERRCODE_EMPTY_CARDTYPE ;}
 			if(ok) {
 
 				/** 1 - CARD HOLDER **/
-				sprintf(query, "insert into cardholder values (default,'',now(),'%s','%s','%s')", iss_name,iss_mobile,iss_email);
-				dbStart();
+				sprintf(query, "insert into cardholder(ID,TID,DateTime,Name,Mobile,Email) values (default,'',now(),'%s','%s','%s')", iss_name,iss_mobile,iss_email);
 				if (mysql_real_query(dbh, query, strlen(query)) == 0) { // success 
 					logNow( "new cardholder created **OK**\n");
 					holderid = mysql_insert_id(dbh);
 				}
-				else
+				else {
 					logNow( "Failed to create new customer.  Error: %s\n", db_error(dbh, res));
+					ok = 0;
+					err = PREPAY_ERRCODE_DB_ERROR;
+				}
+			}
 
 				
+			if(ok) {
 				/** 2 - SEQNO **/
 				sprintf(query, "select seqnum from seqno where seqType='%02s'", iss_cardtype);
 				icnt = databaseCount(query);
 				if(icnt<=0) {
 					icnt = 1;
-					sprintf(query, "insert into seqno values( '%s',%d, now())", iss_cardtype,icnt);
+					sprintf(query, "insert into seqno (seqType,seqNum,DateTime) values( '%s',%d, now())", iss_cardtype,icnt);
 				} else {
 					icnt ++;
 					sprintf(query, "update seqno set seqnum = seqnum+1,DateTime=now() where seqtype ='%s'", iss_cardtype);
 				}
 				if (mysql_real_query(dbh, query, strlen(query)) == 0) // success
 					logNow( "new seqno updated **OK**\n");
-				
+				else {
+					ok = 0;
+					err = PREPAY_ERRCODE_DB_ERROR;
+				}
+			}
+
+			if(ok) {
 				/** 3 - CARDACCOUNT **/
 				sprintf(cardnum,"%4.4s%02s00000%04d","8888",iss_cardtype,icnt);
 				chkbit = get_checkbit(cardnum);
 				sprintf(stmp,"%s%d", cardnum,chkbit);
 				strcpy(cardnum,stmp);
 
-				sprintf(query, "insert into cardaccount values (default,'','%s','%s',%d,now(),%d)", iss_cardtype,cardnum,0,holderid);
+				sprintf(query, "insert into cardaccount (ID,TID,CardType,CardNo,Balance,LastTransDate,HolderId) values (default,'','%s','%s',%d,now(),%d)", iss_cardtype,cardnum,0,holderid);
 				if (mysql_real_query(dbh, query, strlen(query)) == 0) // success
 					logNow( "new card created **OK**\n");
-				else
+				else {
 					logNow( "Failed to create new card.  Error: %s\n", db_error(dbh, res));
-				dbEnd();
+					ok = 0;
+					err = PREPAY_ERRCODE_DB_ERROR;
+				}
 			}
-
 
 			if(ok)
 				sprintf(line,"{TYPE:IssueCardResp,result:OK,CARD:%s,code:0}",cardnum);
@@ -1533,6 +1555,7 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 			continue;
 
 		}else if(strcmp(type,"Deposit")==0 || strcmp(type,"Purchase")==0 ) {
+			unsigned int transtype = 0;
 			char line[128]="";
 			int ok = 1;
 			int err = 0;
@@ -1546,25 +1569,45 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 			getObjectField(json, 1, cardnum, NULL, "Card:");
 			getObjectField(json, 1, amount, NULL, "Amount:");
 
-			if(ok && strlen(cardnum)==0) { ok = 0;  err = 110;}
-			if(ok && strlen(amount)==0) { ok = 0;  err = 111;}
+			if(ok && strlen(cardnum)==0) { ok = 0;  err = PREPAY_ERRCODE_EMPTY_CARD	;}
+			if(ok && strlen(amount)==0) { ok = 0;  err = PREPAY_ERRCODE_EMPTY_AMOUNT;}
 			if(ok) {
-				dbStart();
+				lAmt = atof(amount) * 100.0;
+				if(lAmt>0 && strcmp(type,"Purchase")==0) lAmt = 0 - lAmt;
+				if(lAmt<0 && strcmp(type,"Deposit")==0) {
+					ok = 0;
+					err = PREPAY_ERRCODE_AMOUNT_ERROR;
+				}
+			}
+
+			if(ok) {
 				sprintf(query, "select balance from cardaccount where cardno = '%s'", cardnum);
 				lBal = databaseCount(query);
 				if(lBal<0) {
-					ok = 0; err = 112;
-				} else {
-					lAmt =   atof(amount) * 100 ;
-					lBal = lBal + lAmt;
+					ok = 0;
+					err = PREPAY_ERRCODE_CARD_NOT_EXIST;
+				} 
+			}
 
-					sprintf(query, "update cardaccount set balance = %ld where cardno = '%s'", lBal, cardnum);
-					if (mysql_real_query(dbh, query, strlen(query)) == 0) // success
-						logNow( " card updated **OK**\n");
-					else
-						logNow( "Failed to create card.  Error: %s\n", db_error(dbh, res));
+			if(ok) {
+				sprintf(query, "insert into transaction (ID,TID,TransType,DateTime,CardNo,Amount,HolderId) values (default,'','%s',now(),'%s',%ld,'')", type, cardnum,lAmt);
+				if (mysql_real_query(dbh, query, strlen(query)) == 0) // success
+					logNow( " transaction inserted **OK**\n");
+				else {
+					ok = 0; err = PREPAY_ERRCODE_DB_ERROR;
+					logNow( "Failed to insert transaction.  Error: %s\n", db_error(dbh, res));
 				}
-				dbEnd();
+			}
+
+			if(ok) {
+				lBal = lBal + lAmt;
+				sprintf(query, "update cardaccount set balance = %ld where cardno = '%s'", lBal, cardnum);
+				if (mysql_real_query(dbh, query, strlen(query)) == 0) // success
+					logNow( " card updated **OK**\n");
+				else {
+					ok = 0; err = PREPAY_ERRCODE_DB_ERROR;
+					logNow( "Failed to update balance.  Error: %s\n", db_error(dbh, res));
+				}
 			}
 
 			if(ok)
@@ -1574,7 +1617,160 @@ int processRequest(SOCKET sd, unsigned char * request, unsigned int requestLengt
 			addObject(&response, line, 1, offset, 0);
 			continue;
 
+
+		}else if(strcmp(type,"Balance")==0 ) {
+			unsigned int transtype = 0;
+			char line[128]="";
+			int ok = 1;
+			int err = 0;
+			char query[1024]="";
+			char stmp[1024]="";
+			char name[128]="";
+			char mobile[128]="";
+			char email[128]="";
+			char sId[128]="";
+
+			char amount[20]="";
+			long lAmt = 0;
+			long lBal = 0;
+
+			getObjectField(json, 1, name, NULL, "Name:");
+			getObjectField(json, 1, mobile, NULL, "Mobile:");
+			getObjectField(json, 1, email, NULL, "Email:");
+
+			if(ok && !strlen(name)&& !strlen(mobile)&& !strlen(email)) { ok = 0;  err = PREPAY_ERRCODE_EMPTY_CARD;}
+			if(ok) {
+				sprintf(query, "select id,name,mobile,email from cardholder where 1=1 " );
+				if(strlen(name)) { sprintf( stmp, " and name = '%s'",name); strcat( query, stmp); }
+				if(strlen(mobile)) { sprintf( stmp, " and mobile = '%s'",mobile); strcat( query, stmp); }
+				if(strlen(email)) { sprintf( stmp, " and email = '%s'",email); strcat( query, stmp); }
+				if (mysql_real_query(dbh, query, strlen(query)) == 0) // success
+					{
+						MYSQL_RES * res;
+						MYSQL_ROW row;
+
+						if (res = mysql_store_result(dbh))
+						{
+							if (row = mysql_fetch_row(res))
+							{
+								if (row[0])
+								{
+									strcpy(sId, row[0]);
+									strcpy(name, row[1]);
+									strcpy(mobile, row[2]);
+									strcpy(email, row[3]);
+								}
+							}
+							mysql_free_result(res);
+						}
+					} else {
+						ok = 0;
+						err = PREPAY_ERRCODE_CARD_NOT_EXIST;
+						logNow( "Failed to get cardholder[%s].  Error: %s\n", query,db_error(dbh, res));
+					}
+			}
+
+			if(ok) {
+				sprintf(query, "select balance from cardaccount where holderid = %s",sId );
+				lBal = databaseCount(query);
+				if(lBal<0) {
+					ok = 0;
+					err = PREPAY_ERRCODE_CARD_NOT_EXIST;
+				} 
+			}
+
+			if(ok)
+				sprintf(line,"{TYPE:%sResp,result:OK,Name:%s,Mobile:%s,Email:%s,balance:%.2f,code:0}",type,name,mobile,email,lBal/100.0);
+			else
+				sprintf(line,"{TYPE:%sResp,result:NOK,code:%d}",type,err);
+			addObject(&response, line, 1, offset, 0);
+			continue;
+
 		}
+
+		// PREPAY - MOBILE
+		else if (strcmp(type, "MobileLogon") == 0) {
+			char line[128]="";
+
+			sprintf(line,"{TYPE:%sResp,result:OK,code:0}",type);
+
+			addObject(&response, line, 1, offset, 0);
+
+			continue;
+
+		}else if(strcmp(type,"MobileBalance")==0 ) {
+			char line[10240]="";
+			char transdetail[10240]="";
+			int ok = 1;
+			int err = 0;
+			char query[1024]="";
+			char stmp[1024]="";
+			char cardnum[128]="";
+			char transtype[128]="";
+			char datetime[128]="";
+			char amount[128]="";
+			char sId[128]="";
+			long lAmt = 0;
+			long lBal = 0;
+
+			getObjectField(json, 1, cardnum, NULL, "Cardno:");
+
+			if(ok && !strlen(cardnum)) { ok = 0;  err = PREPAY_ERRCODE_EMPTY_CARD;}
+			if(ok) {
+				sprintf(query, "select transtype,datetime,amount from transaction where cardno = '%s' order by id desc limit %d", cardnum,10 );
+				if (mysql_real_query(dbh, query, strlen(query)) == 0) // success
+					{
+						MYSQL_RES * res;
+						MYSQL_ROW row;
+						int firstline = 1;
+
+						if (res = mysql_store_result(dbh))
+						{
+							while (row = mysql_fetch_row(res))
+							{
+								if (row[0])
+								{
+									strcpy(transtype, row[0]);
+									strcpy(datetime, row[1]);
+									strcpy(amount, row[2]);
+									lAmt = atol(amount);
+									sprintf(stmp,"%c{datetime:%4.4s%2.2s%2.2s%2.2s%2.2s%2.2s,type:%s,Amount:%.2f}",
+										firstline?'[':',',
+										datetime,datetime+5,datetime+8,datetime+11,datetime+14,datetime+17,
+										transtype,lAmt/100.0);
+									strcat(transdetail,stmp);
+									if(firstline) firstline = 0;
+								}
+							}
+							if(!firstline) strcat(transdetail,"]");
+							mysql_free_result(res);
+						}
+					} else {
+						ok = 0;
+						err = PREPAY_ERRCODE_CARD_NOT_EXIST;
+						logNow( "Failed to get transaction[%s].  Error: %s\n", query,db_error(dbh, res));
+					}
+			}
+
+			if(ok) {
+				sprintf(query, "select balance from cardaccount where cardno = '%s'",cardnum );
+				lBal = databaseCount(query);
+				if(lBal<0) {
+					ok = 0;
+					err = PREPAY_ERRCODE_CARD_NOT_EXIST;
+					logNow( "Failed to get cardaccount[%s].  Error: %s\n", query,db_error(dbh, res));
+				} 
+			}
+
+			if(ok)
+				sprintf(line,"{TYPE:%sResp,result:OK,balance:%.2f,trans:%s,code:0}",type,lBal/100.0,transdetail);
+			else
+				sprintf(line,"{TYPE:%sResp,result:NOK,code:%d}",type,err);
+			addObject(&response, line, 1, offset, 0);
+			continue;
+
+		}
+
 
 	}
 
